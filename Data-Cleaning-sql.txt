@@ -1,0 +1,191 @@
+use Nashville_project
+
+
+-- Cleaning data in SQL queries
+select * 
+from dbo.nashvillehousing
+
+----------------------------------------------------------------------------------------------------------
+
+-- Standarize Date format
+
+select saledateconverted, convert(date,saledate)
+from dbo.nashvillehousing
+
+update nashvillehousing -- este querie no se aplica correctamente
+set saledate = convert(date,saledate)
+
+alter table nashvillehousing
+add saledateconverted date;
+
+update nashvillehousing
+set saledateconverted = convert(date,saledate)
+
+----------------------------------------------------------------------------------------------------------
+
+-- Populate Property Address Data
+
+select *
+from nashvillehousing
+-- where propertyaddress is null
+order by ParcelID
+
+/* usaremos la variable ParcelID para cruzarla con PropertyAddress para realizar un join y rellenar las direcciones que estan vacias. */ 
+
+select a.ParcelID, a.PropertyAddress, b.ParcelID, b.PropertyAddress, isnull(a.propertyaddress, b.PropertyAddress)
+from nashvillehousing a
+join NashvilleHousing b
+	on a.parcelID = b.parcelID
+	and a.[UniqueID ] <> b.[UniqueID ]
+where a.PropertyAddress is null
+
+/* procedemos a actualizar luego de validar las direcciones con la funcion "isnull" */
+
+Update a
+set propertyaddress = isnull(a.propertyaddress, b.PropertyAddress)
+from nashvillehousing a
+join NashvilleHousing b
+	on a.parcelID = b.parcelID
+	and a.[UniqueID ] <> b.[UniqueID ]
+where a.PropertyAddress is null
+
+-------------------------------------------------------------------------------------------------------
+
+-- Breaking out Address into Individual Columns (Address, City, State)
+
+select PropertyAddress
+from nashvillehousing
+-- where propertyaddress is null
+-- order by ParcelID
+
+Select
+substring(propertyaddress, 1, charindex(',', propertyaddress)-1) as address,
+/* sirve para deshacernos de la coma, el -1 es para quitar la coma ya que con substring le da la posicion inicial (1) y la cantidad de caracteres
+a extraer donde el limite es la coma (en otros casos puede ser un numero positivo (similar a funcion extrae)) */
+substring(propertyaddress, charindex(',', propertyaddress) +1, len(propertyaddress)) as address
+/* en este caso aplicamos nuevamente string pero teniendo como inicial la coma y sumandole +1 para escoger el texto de la ciudad y con LEN
+-- para que nos devuelva el largo del nombre de la ciudad */
+from nashvillehousing
+
+
+alter table dbo.nashvillehousing -- se ingreso todo el nombre de la tabla porque de lo contrario daba error.
+add PropertySplitAddress nvarchar(255);
+
+update nashvillehousing
+set PropertySplitAddress = substring(propertyaddress, 1, charindex(',', propertyaddress)-1)
+
+alter table dbo.nashvillehousing -- se ingreso todo el nombre de la tabla porque de lo contrario daba error.
+add propertysplitcity nvarchar(255);
+
+update nashvillehousing
+set propertysplitcity = substring(propertyaddress, charindex(',', propertyaddress) +1, len(propertyaddress))
+
+select *
+from nashvillehousing
+
+-- otra forma de desgolar la direccion (ejemplo con variable Owneraddress)
+
+select owneraddress
+from NashvilleHousing
+
+select
+/* en este caso 1 es el ultimo valor del string, conforme se ingresan nros mayores, 
+va tomando valores iniciales del string (ver ejemplo), si uno quiere mantener el  orden de la separacion se invierten los nros */
+parsename(replace(owneraddress,',','.'),1) 
+,parsename(replace(owneraddress,',','.'),2)
+,parsename(replace(owneraddress,',','.'),3)
+from nashvillehousing
+
+-- invirtiendo nros
+select
+parsename(replace(owneraddress,',','.'),3) 
+,parsename(replace(owneraddress,',','.'),2)
+,parsename(replace(owneraddress,',','.'),1)
+from nashvillehousing
+
+-- creando columnas para ingresar nuevos datos de consulta anterior
+
+alter table dbo.nashvillehousing 
+add OwnerSplitAddress nvarchar(255); -- se agrega el nvarchar porque se esta creando un campo nuevo
+
+update nashvillehousing
+set OwnerSplitAddress = parsename(replace(owneraddress,',','.'),3)
+
+alter table dbo.nashvillehousing 
+add ownersplitcity nvarchar(255); 
+
+update nashvillehousing
+set ownersplitcity = parsename(replace(owneraddress,',','.'),2)
+
+alter table dbo.nashvillehousing 
+add ownersplitstate nvarchar(255);
+
+update nashvillehousing
+set ownersplitstate = parsename(replace(owneraddress,',','.'),1)
+
+-----------------------------------------------------------------------------------------------------
+
+-- Change Y and N to Yes and No in "Sold as Vacant" field
+
+select distinct(soldasvacant), count(soldasvacant)
+from NashvilleHousing
+/* con distinct validamos los datos distintos que contiene la variable soldasvacant y 
+con count contamos cuantas observaciones hay por cada variable */
+group by soldasvacant
+order by 2
+
+select soldasvacant,
+case when SoldAsVacant = 'Y' then 'Yes'
+	 when SoldAsVacant = 'N' then 'No'
+	 else soldasvacant
+	 end
+from NashvilleHousing
+
+-- actualizamos la columna con la consulta previa realizada y por ultimo comprobamos que se haya cargado correctamente con select
+update dbo.nashvillehousing
+set SoldAsVacant = case when SoldAsVacant = 'Y' then 'Yes'
+	 when SoldAsVacant = 'N' then 'No'
+	 else soldasvacant
+	 end
+from NashvilleHousing
+
+--------------------------------------------------------------------------------------------------------------------
+
+-- Remove Duplicates (CTE use)
+
+with rownumCTE as(
+select *,
+	row_number() over (
+	partition by parcelid,
+				 propertyaddress,
+				 saleprice,
+				 saledate,
+				 legalreference
+				 order by
+					uniqueid
+					) row_num
+from NashvilleHousing
+--order by ParcelID
+)
+delete --aqui reemplazamos por DELETE, si queremos validar reemplazamos este delete por el select y activamos order by para comprobar
+from rownumCTE
+where row_num > 1
+--order by propertyaddress
+/* esta consulta nos devuelve todos los valores duplicados (row_num = 2) por lo que reemplazamos 
+el ultimo "SELECT *" por un "DELETE" para eliminarlos y desactivamos el "Order by" */
+
+----------------------------------------------------------------------------------------------------------------------------------
+
+-- Delete Unused Columns 
+-- (esto no es obligatorio hacerlo, al menos no con la data en crudo, el consejo es que se pida autorizacion para hacer este tipo de cambios)
+
+select *
+from NashvilleHousing
+
+alter table nashvillehousing
+drop column owneraddress, taxdistrict, propertyaddress
+
+alter table nashvillehousing
+drop column saledate
+
+-- Nota: recordar que el objetivo de este proyecto es limpiar la data para hacerla mas útil
